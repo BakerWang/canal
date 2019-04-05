@@ -10,27 +10,31 @@ import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.alibaba.druid.sql.ast.SQLDataType;
-import com.alibaba.druid.sql.ast.SQLDataTypeImpl;
-import com.alibaba.druid.sql.ast.SQLExpr;
-import com.alibaba.druid.sql.ast.SQLStatement;
-import com.alibaba.druid.sql.ast.expr.SQLCharExpr;
-import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
-import com.alibaba.druid.sql.ast.expr.SQLNullExpr;
-import com.alibaba.druid.sql.ast.expr.SQLPropertyExpr;
-import com.alibaba.druid.sql.ast.statement.SQLColumnConstraint;
-import com.alibaba.druid.sql.ast.statement.SQLColumnDefinition;
-import com.alibaba.druid.sql.ast.statement.SQLColumnPrimaryKey;
-import com.alibaba.druid.sql.ast.statement.SQLCreateTableStatement;
-import com.alibaba.druid.sql.ast.statement.SQLNotNullConstraint;
-import com.alibaba.druid.sql.ast.statement.SQLNullConstraint;
-import com.alibaba.druid.sql.ast.statement.SQLSelectOrderByItem;
-import com.alibaba.druid.sql.ast.statement.SQLTableElement;
-import com.alibaba.druid.sql.dialect.mysql.ast.MySqlPrimaryKey;
-import com.alibaba.druid.sql.repository.Schema;
-import com.alibaba.druid.sql.repository.SchemaObject;
-import com.alibaba.druid.sql.repository.SchemaRepository;
-import com.alibaba.druid.util.JdbcConstants;
+import com.alibaba.fastsql.sql.ast.SQLDataType;
+import com.alibaba.fastsql.sql.ast.SQLDataTypeImpl;
+import com.alibaba.fastsql.sql.ast.SQLExpr;
+import com.alibaba.fastsql.sql.ast.SQLStatement;
+import com.alibaba.fastsql.sql.ast.expr.SQLCharExpr;
+import com.alibaba.fastsql.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.fastsql.sql.ast.expr.SQLMethodInvokeExpr;
+import com.alibaba.fastsql.sql.ast.expr.SQLNullExpr;
+import com.alibaba.fastsql.sql.ast.expr.SQLPropertyExpr;
+import com.alibaba.fastsql.sql.ast.statement.SQLColumnConstraint;
+import com.alibaba.fastsql.sql.ast.statement.SQLColumnDefinition;
+import com.alibaba.fastsql.sql.ast.statement.SQLColumnPrimaryKey;
+import com.alibaba.fastsql.sql.ast.statement.SQLColumnUniqueKey;
+import com.alibaba.fastsql.sql.ast.statement.SQLCreateTableStatement;
+import com.alibaba.fastsql.sql.ast.statement.SQLNotNullConstraint;
+import com.alibaba.fastsql.sql.ast.statement.SQLNullConstraint;
+import com.alibaba.fastsql.sql.ast.statement.SQLSelectOrderByItem;
+import com.alibaba.fastsql.sql.ast.statement.SQLTableElement;
+import com.alibaba.fastsql.sql.dialect.mysql.ast.MySqlPrimaryKey;
+import com.alibaba.fastsql.sql.dialect.mysql.ast.MySqlUnique;
+import com.alibaba.fastsql.sql.dialect.mysql.ast.expr.MySqlOrderingExpr;
+import com.alibaba.fastsql.sql.repository.Schema;
+import com.alibaba.fastsql.sql.repository.SchemaObject;
+import com.alibaba.fastsql.sql.repository.SchemaRepository;
+import com.alibaba.fastsql.util.JdbcConstants;
 import com.alibaba.otter.canal.parse.inbound.TableMeta;
 import com.alibaba.otter.canal.parse.inbound.TableMeta.FieldMeta;
 import com.alibaba.otter.canal.parse.inbound.mysql.ddl.DruidDdlParser;
@@ -56,6 +60,11 @@ public class MemoryTableMeta implements TableMetaTSDB {
         return true;
     }
 
+    @Override
+    public void destory() {
+        tableMetas.clear();
+    }
+
     public boolean apply(EntryPosition position, String schema, String ddl, String extra) {
         tableMetas.clear();
         synchronized (this) {
@@ -64,7 +73,13 @@ public class MemoryTableMeta implements TableMetaTSDB {
             }
 
             try {
-                repository.console(ddl);
+                // druid暂时flush privileges语法解析有问题
+                if (!StringUtils.startsWithIgnoreCase(StringUtils.trim(ddl), "flush")
+                    && !StringUtils.startsWithIgnoreCase(StringUtils.trim(ddl), "grant")
+                    && !StringUtils.startsWithIgnoreCase(StringUtils.trim(ddl), "create user")
+                    && !StringUtils.startsWithIgnoreCase(StringUtils.trim(ddl), "drop user")) {
+                    repository.console(ddl);
+                }
             } catch (Throwable e) {
                 logger.warn("parse faield : " + ddl, e);
             }
@@ -88,7 +103,7 @@ public class MemoryTableMeta implements TableMetaTSDB {
                 tableMeta = tableMetas.get(keys);
                 if (tableMeta == null) {
                     Schema schemaRep = repository.findSchema(schema);
-                    if (schema == null) {
+                    if (schemaRep == null) {
                         return null;
                     }
                     SchemaObject data = schemaRep.findTable(table);
@@ -187,7 +202,7 @@ public class MemoryTableMeta implements TableMetaTSDB {
             if (column.getDefaultExpr() == null || column.getDefaultExpr() instanceof SQLNullExpr) {
                 fieldMeta.setDefaultValue(null);
             } else {
-                fieldMeta.setDefaultValue(getSqlName(column.getDefaultExpr()));
+                fieldMeta.setDefaultValue(DruidDdlParser.unescapeQuotaName(getSqlName(column.getDefaultExpr())));
             }
 
             fieldMeta.setColumnName(name);
@@ -201,6 +216,9 @@ public class MemoryTableMeta implements TableMetaTSDB {
                     fieldMeta.setNullable(true);
                 } else if (constraint instanceof SQLColumnPrimaryKey) {
                     fieldMeta.setKey(true);
+                    fieldMeta.setNullable(false);
+                } else if (constraint instanceof SQLColumnUniqueKey) {
+                    fieldMeta.setUnique(true);
                 }
             }
             tableMeta.addFieldMeta(fieldMeta);
@@ -211,6 +229,15 @@ public class MemoryTableMeta implements TableMetaTSDB {
                 String name = getSqlName(pk.getExpr());
                 FieldMeta field = tableMeta.getFieldMetaByName(name);
                 field.setKey(true);
+                field.setNullable(false);
+            }
+        } else if (element instanceof MySqlUnique) {
+            MySqlUnique column = (MySqlUnique) element;
+            List<SQLSelectOrderByItem> uks = column.getColumns();
+            for (SQLSelectOrderByItem uk : uks) {
+                String name = getSqlName(uk.getExpr());
+                FieldMeta field = tableMeta.getFieldMetaByName(name);
+                field.setUnique(true);
             }
         }
     }
@@ -228,6 +255,10 @@ public class MemoryTableMeta implements TableMetaTSDB {
             return DruidDdlParser.unescapeName(((SQLIdentifierExpr) sqlName).getName());
         } else if (sqlName instanceof SQLCharExpr) {
             return ((SQLCharExpr) sqlName).getText();
+        } else if (sqlName instanceof SQLMethodInvokeExpr) {
+            return DruidDdlParser.unescapeName(((SQLMethodInvokeExpr) sqlName).getMethodName());
+        } else if (sqlName instanceof MySqlOrderingExpr) {
+            return getSqlName(((MySqlOrderingExpr) sqlName).getExpr());
         } else {
             return sqlName.toString();
         }
