@@ -5,25 +5,27 @@ import java.util.Map;
 
 import org.apache.commons.lang.StringUtils;
 
+import com.alibaba.otter.canal.client.adapter.support.AdapterConfig;
+
 /**
  * RDB表映射配置
  *
  * @author rewerma 2018-11-07 下午02:41:34
  * @version 1.0.0
  */
-public class MappingConfig {
+public class MappingConfig implements AdapterConfig {
 
-    private String    dataSourceKey;   // 数据源key
+    private String    dataSourceKey;      // 数据源key
 
-    private String    destination;     // canal实例或MQ的topic
+    private String    destination;        // canal实例或MQ的topic
 
-    private String    groupId;         // groupId
+    private String    groupId;            // groupId
 
-    private String    outerAdapterKey; // 对应适配器的key
+    private String    outerAdapterKey;    // 对应适配器的key
 
-    private boolean   concurrent = false;      // 是否并行同步
+    private boolean   concurrent = false; // 是否并行同步
 
-    private DbMapping dbMapping;       // db映射配置
+    private DbMapping dbMapping;          // db映射配置
 
     public String getDataSourceKey() {
         return dataSourceKey;
@@ -73,6 +75,10 @@ public class MappingConfig {
         this.destination = destination;
     }
 
+    public AdapterMapping getMapping() {
+        return dbMapping;
+    }
+
     public void validate() {
         if (dbMapping.database == null || dbMapping.database.isEmpty()) {
             throw new NullPointerException("dbMapping.database");
@@ -85,21 +91,23 @@ public class MappingConfig {
         }
     }
 
-    public static class DbMapping {
+    public static class DbMapping implements AdapterMapping {
 
-        private boolean             mirrorDb    = false;                 // 是否镜像库
-        private String              database;                            // 数据库名或schema名
-        private String              table;                               // 表名
-        private Map<String, String> targetPk    = new LinkedHashMap<>(); // 目标表主键字段
-        private boolean             mapAll      = false;                 // 映射所有字段
-        private String              targetDb;                            // 目标库名
-        private String              targetTable;                         // 目标表名
-        private Map<String, String> targetColumns;                       // 目标表字段映射
+        private boolean             mirrorDb        = false;                 // 是否镜像库
+        private String              database;                                // 数据库名或schema名
+        private String              table;                                   // 表名
+        private Map<String, String> targetPk        = new LinkedHashMap<>(); // 目标表主键字段
+        private boolean             mapAll          = false;                 // 映射所有字段
+        private String              targetDb;                                // 目标库名
+        private String              targetTable;                             // 目标表名
+        private Map<String, String> targetColumns;                           // 目标表字段映射
 
-        private String              etlCondition;                        // etl条件sql
+        private boolean             caseInsensitive = false;                 // 目标表不区分大小写，默认是否
 
-        private int                 readBatch   = 5000;
-        private int                 commitBatch = 5000;                  // etl等批量提交大小
+        private String              etlCondition;                            // etl条件sql
+
+        private int                 readBatch       = 5000;
+        private int                 commitBatch     = 5000;                  // etl等批量提交大小
 
         private Map<String, String> allMapColumns;
 
@@ -172,6 +180,14 @@ public class MappingConfig {
 
         public void setTargetColumns(Map<String, String> targetColumns) {
             this.targetColumns = targetColumns;
+        }
+
+        public boolean isCaseInsensitive() {
+            return caseInsensitive;
+        }
+
+        public void setCaseInsensitive(boolean caseInsensitive) {
+            this.caseInsensitive = caseInsensitive;
         }
 
         public String getEtlCondition() {
